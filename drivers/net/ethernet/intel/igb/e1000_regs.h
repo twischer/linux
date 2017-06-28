@@ -199,11 +199,15 @@
 
 #define E1000_RXPBS	0x02404  /* Rx Packet Buffer Size - RW */
 #define E1000_TXPBS	0x03404  /* Tx Packet Buffer Size - RW */
+#define E1000_TQAVCC(_n)   (0x03004 + ((_n) * 0x40)) /* Tx Qav Credit Control*/
+#define E1000_TQAVHC(_n)   (0x0300C + ((_n) * 0x40)) /* Tx Qav Hi Credit */
+#define E1000_TQAVCTRL 0x03570	/* Tx Qav Control */
 
 #define E1000_TDFH     0x03410  /* TX Data FIFO Head - RW */
 #define E1000_TDFT     0x03418  /* TX Data FIFO Tail - RW */
 #define E1000_TDFHS    0x03420  /* TX Data FIFO Head Saved - RW */
 #define E1000_TDFPC    0x03430  /* TX Data FIFO Packet Count - RW */
+#define E1000_DTXMXPKTSZ   0x0355C /* DMA Tx Max Allowable Packet Size*/
 #define E1000_DTXCTL   0x03590  /* DMA TX Control - RW */
 #define E1000_CRCERRS  0x04000  /* CRC Error Count - R/clr */
 #define E1000_ALGNERRC 0x04004  /* Alignment Error Count - R/clr */
@@ -313,6 +317,7 @@
 #define E1000_IP4AT_REG(_i)     (0x05840 + ((_i) * 8))
 #define E1000_IP6AT_REG(_i)     (0x05880 + ((_i) * 4))
 #define E1000_WUPM_REG(_i)      (0x05A00 + ((_i) * 4))
+#define E1000_FHFT(_i)          (0x09000 + ((_i) * 0x100)) /*filter n = 0..3*/
 #define E1000_FFMT_REG(_i)      (0x09000 + ((_i) * 8))
 #define E1000_FFVT_REG(_i)      (0x09800 + ((_i) * 8))
 #define E1000_FFLT_REG(_i)      (0x05F00 + ((_i) * 8))
