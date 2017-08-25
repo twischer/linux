@@ -233,6 +233,30 @@ static const struct pci_error_handlers igb_err_handler = {
 
 static void igb_init_dmac(struct igb_adapter *adapter, u32 pba);
 
+void igb_register_avb_linkstat_cb(struct igb_adapter *adapter, void (*cb)
+				 (struct igb_adapter *adapter, bool up))
+{
+	if (adapter)
+		adapter->avb_linkstat = cb;
+}
+EXPORT_SYMBOL(igb_register_avb_linkstat_cb);
+
+void igb_register_avb_txirq(struct igb_adapter *adapter, irqreturn_t (*cb)
+			   (struct igb_adapter *adapter, int queue))
+{
+	if (adapter)
+		adapter->avb_tx_irq = cb;
+}
+EXPORT_SYMBOL(igb_register_avb_txirq);
+
+void igb_register_avb_rxirq(struct igb_adapter *adapter, irqreturn_t (*cb)
+			   (struct igb_adapter *adapter, int queue))
+{
+	if (adapter)
+		adapter->avb_rx_irq = cb;
+}
+EXPORT_SYMBOL(igb_register_avb_rxirq);
+
 static struct pci_driver igb_driver = {
 	.name     = igb_driver_name,
 	.id_table = igb_pci_tbl,
@@ -1595,6 +1619,67 @@ static void igb_get_hw_control(struct igb_adapter *adapter)
 			ctrl_ext | E1000_CTRL_EXT_DRV_LOAD);
 }
 
+static void igb_init_qav(struct e1000_hw *hw)
+{
+	u32	tqavctrl;
+	u32	txpbsize;
+	unsigned int i;
+
+	/* configure tx packet buffer allocation according to QAV needs
+	 * - need to configure all queues as overall sum is limited to 24.
+	 */
+	txpbsize = 8 << E1000_TXPBSIZE_TX0PB_SHIFT;
+	txpbsize |= 8 << E1000_TXPBSIZE_TX1PB_SHIFT;
+	txpbsize |= 4 << E1000_TXPBSIZE_TX2PB_SHIFT;
+	txpbsize |= 4 << E1000_TXPBSIZE_TX3PB_SHIFT;
+	wr32(E1000_TXPBS, txpbsize);
+
+	/* limit to standard frames including VLAN tags */
+	wr32(E1000_DTXMXPKTSZ, IGB_AVB_MAX_FRAME_SIZE / 64);
+
+	/* enable QAV queuing */
+	tqavctrl = E1000_TQAVCTRL_TXMODE | E1000_TQAVCTRL_DATA_FETCH_ARB |
+		   E1000_TQAVCTRL_DATA_TRAN_ARB | E1000_TQAVCTRL_SP_WAIT_SR;
+	wr32(E1000_TQAVCTRL, tqavctrl);
+
+	/* enable QAV mode for AVB queues. Init to no idle slope and no credits.
+	 * Idle slope and credits need to be configured dynamically
+	 */
+	for (i = 0; i < IGB_NUM_AVB_QUEUES; i++) {
+		wr32(E1000_TQAVCC(i), E1000_TQAVCC_QUEUEMODE);
+		wr32(E1000_TQAVHC(i), E1000_TQAVHC_ZEROCREDIT);
+	}
+}
+
+static unsigned int igb_reserved_queues(struct igb_adapter *adapter)
+{
+	/* only i210 has full AVB support (PTP + QAV) */
+	if (adapter->hw.mac.type != e1000_i210)
+		return 0;
+
+	if (!igb_avb_support_enabled())
+		return 0;
+
+	/* some preconditions on queue configuration must be met...*/
+	if ((adapter->flags & IGB_FLAG_HAS_MSIX) &&
+	    (adapter->num_tx_queues >= IGB_NUM_AVB_QUEUES) &&
+	    (adapter->num_tx_queues == IGB_MAX_RX_QUEUES_82575) &&
+	    (adapter->num_rx_queues == IGB_MAX_RX_QUEUES_82575) &&
+	    (adapter->num_q_vectors == IGB_MAX_RX_QUEUES_82575) &&
+	    (adapter->tx_ring_count == IGB_AVB_TXR_CNT) &&
+	    (adapter->rx_ring_count == IGB_AVB_RXR_CNT)) {
+		/* some AVB specific settings needed */
+		igb_init_qav(&adapter->hw);
+		dev_info(&adapter->pdev->dev, "AVB enabled\n");
+		/* the first 2 TX and RX queues get bound to AVB,
+		 * these need to be skipped on any activities from
+		 * Linux network stack
+		 */
+		return IGB_NUM_AVB_QUEUES;
+	}
+	return 0;
+}
+
 /**
  *  igb_configure - configure the hardware for RX and TX
  *  @adapter: private board structure
@@ -1602,7 +1687,9 @@ static void igb_get_hw_control(struct igb_adapter *adapter)
 static void igb_configure(struct igb_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
-	int i;
+	unsigned int i;
+
+	adapter->num_reserved = igb_reserved_queues(adapter);
 
 	igb_get_hw_control(adapter);
 	igb_set_rx_mode(netdev);
@@ -1623,7 +1710,8 @@ static void igb_configure(struct igb_adapter *adapter)
 	 * at least 1 descriptor unused to make sure
 	 * next_to_use != next_to_clean
 	 */
-	for (i = 0; i < adapter->num_rx_queues; i++) {
+	for (i = adapter->num_reserved;
+	    i < adapter->num_rx_queues; i++) {
 		struct igb_ring *ring = adapter->rx_ring[i];
 		igb_alloc_rx_buffers(ring, igb_desc_unused(ring));
 	}
@@ -1724,6 +1812,12 @@ static void igb_check_swap_media(struct igb_adapter *adapter)
 	wr32(E1000_CTRL_EXT, ctrl_ext);
 }
 
+static void igb_avb_linkstat(struct igb_adapter *adapter, bool up)
+{
+	if (adapter->avb_linkstat)
+		adapter->avb_linkstat(adapter, up);
+}
+
 /**
  *  igb_up - Open the interface and prepare it to handle traffic
  *  @adapter: board private structure
@@ -1731,14 +1825,14 @@ static void igb_check_swap_media(struct igb_adapter *adapter)
 int igb_up(struct igb_adapter *adapter)
 {
 	struct e1000_hw *hw = &adapter->hw;
-	int i;
+	unsigned int i;
 
 	/* hardware has been reset, we need to reload some things */
 	igb_configure(adapter);
 
 	clear_bit(__IGB_DOWN, &adapter->state);
 
-	for (i = 0; i < adapter->num_q_vectors; i++)
+	for (i = adapter->num_reserved; i < adapter->num_q_vectors; i++)
 		napi_enable(&(adapter->q_vector[i]->napi));
 
 	if (adapter->flags & IGB_FLAG_HAS_MSIX)
@@ -1760,6 +1854,8 @@ int igb_up(struct igb_adapter *adapter)
 
 	netif_tx_start_all_queues(adapter->netdev);
 
+	igb_avb_linkstat(adapter, true);
+
 	/* start the watchdog. */
 	hw->mac.get_link_status = 1;
 	schedule_work(&adapter->watchdog_task);
@@ -1776,7 +1872,7 @@ void igb_down(struct igb_adapter *adapter)
 	struct net_device *netdev = adapter->netdev;
 	struct e1000_hw *hw = &adapter->hw;
 	u32 tctl, rctl;
-	int i;
+	unsigned int i;
 
 	/* signal that we're down so the interrupt handler does not
 	 * reschedule our watchdog timer
@@ -1803,7 +1899,7 @@ void igb_down(struct igb_adapter *adapter)
 
 	adapter->flags &= ~IGB_FLAG_NEED_LINK_UPDATE;
 
-	for (i = 0; i < adapter->num_q_vectors; i++) {
+	for (i = adapter->num_reserved; i < adapter->num_q_vectors; i++) {
 		if (adapter->q_vector[i]) {
 			napi_synchronize(&adapter->q_vector[i]->napi);
 			napi_disable(&adapter->q_vector[i]->napi);
@@ -1820,6 +1916,8 @@ void igb_down(struct igb_adapter *adapter)
 
 	adapter->link_speed = 0;
 	adapter->link_duplex = 0;
+
+	igb_avb_linkstat(adapter, false);
 
 	if (!pci_channel_offline(adapter->pdev))
 		igb_reset(adapter);
@@ -3139,7 +3237,7 @@ static int __igb_open(struct net_device *netdev, bool resuming)
 	struct e1000_hw *hw = &adapter->hw;
 	struct pci_dev *pdev = adapter->pdev;
 	int err;
-	int i;
+	unsigned int i;
 
 	/* disallow open during test */
 	if (test_bit(__IGB_TESTING, &adapter->state)) {
@@ -3177,19 +3275,19 @@ static int __igb_open(struct net_device *netdev, bool resuming)
 
 	/* Notify the stack of the actual queue counts. */
 	err = netif_set_real_num_tx_queues(adapter->netdev,
-					   adapter->num_tx_queues);
+		adapter->num_tx_queues - adapter->num_reserved);
 	if (err)
 		goto err_set_queues;
 
 	err = netif_set_real_num_rx_queues(adapter->netdev,
-					   adapter->num_rx_queues);
+		adapter->num_rx_queues - adapter->num_reserved);
 	if (err)
 		goto err_set_queues;
 
 	/* From here on the code is the same as igb_up() */
 	clear_bit(__IGB_DOWN, &adapter->state);
 
-	for (i = 0; i < adapter->num_q_vectors; i++)
+	for (i = adapter->num_reserved; i < adapter->num_q_vectors; i++)
 		napi_enable(&(adapter->q_vector[i]->napi));
 
 	/* Clear any pending interrupts. */
@@ -3206,6 +3304,8 @@ static int __igb_open(struct net_device *netdev, bool resuming)
 	}
 
 	netif_tx_start_all_queues(netdev);
+
+	igb_avb_linkstat(adapter, true);
 
 	if (!resuming)
 		pm_runtime_put(&pdev->dev);
@@ -3572,6 +3672,10 @@ static void igb_setup_mrqc(struct igb_adapter *adapter)
 			mrqc |= E1000_MRQC_ENABLE_RSS_MQ;
 	}
 	igb_vmm_control(adapter);
+
+	if (adapter->num_reserved)
+		/* AVB specific:  use queue 3 for all non-filtered packets */
+		mrqc = E1000_MRQC_ENABLE_DEF_Q3;
 
 	wr32(E1000_MRQC, mrqc);
 }
@@ -3973,9 +4077,9 @@ static void igb_clean_rx_ring(struct igb_ring *rx_ring)
  **/
 static void igb_clean_all_rx_rings(struct igb_adapter *adapter)
 {
-	int i;
+	unsigned int i;
 
-	for (i = 0; i < adapter->num_rx_queues; i++)
+	for (i = adapter->num_reserved; i < adapter->num_rx_queues; i++)
 		if (adapter->rx_ring[i])
 			igb_clean_rx_ring(adapter->rx_ring[i]);
 }
@@ -4266,8 +4370,9 @@ static void igb_set_rx_mode(struct net_device *netdev)
 		vmolr |= E1000_VMOLR_ROPE;
 	}
 
-	/* enable VLAN filtering by default */
-	rctl |= E1000_RCTL_VFE;
+	if (!adapter->num_reserved)
+		/* enable VLAN filtering by default */
+		rctl |= E1000_RCTL_VFE;
 
 	/* disable VLAN filtering for modes that require it */
 	if ((netdev->flags & IFF_PROMISC) ||
@@ -5335,10 +5440,12 @@ static inline struct igb_ring *igb_tx_queue_mapping(struct igb_adapter *adapter,
 {
 	unsigned int r_idx = skb->queue_mapping;
 
-	if (r_idx >= adapter->num_tx_queues)
-		r_idx = r_idx % adapter->num_tx_queues;
+	if (r_idx >= (adapter->num_tx_queues - adapter->num_reserved))
+		r_idx = r_idx % (adapter->num_tx_queues -
+				 adapter->num_reserved);
 
-	return adapter->tx_ring[r_idx];
+	/*skip reserved queue*/
+	return adapter->tx_ring[r_idx + adapter->num_reserved];
 }
 
 static netdev_tx_t igb_xmit_frame(struct sk_buff *skb,
@@ -5778,14 +5885,38 @@ static void igb_write_itr(struct igb_q_vector *q_vector)
 	q_vector->set_itr = 0;
 }
 
+static irqreturn_t igb_handle_avb(struct igb_q_vector *q_vector,
+				  struct igb_adapter *adapter)
+{
+	unsigned int handled = 0;
+
+	if (q_vector->tx.ring &&
+	    (q_vector->tx.ring->queue_index < adapter->num_reserved)) {
+		handled++;
+		if (adapter->avb_tx_irq)
+			adapter->avb_tx_irq(adapter,
+					    q_vector->tx.ring->queue_index);
+	}
+	if (q_vector->rx.ring &&
+	    (q_vector->rx.ring->queue_index < adapter->num_reserved)) {
+		handled++;
+		if (adapter->avb_rx_irq)
+			adapter->avb_rx_irq(adapter,
+					    q_vector->rx.ring->queue_index);
+	}
+	return handled ? IRQ_HANDLED : IRQ_NONE;
+}
+
 static irqreturn_t igb_msix_ring(int irq, void *data)
 {
 	struct igb_q_vector *q_vector = data;
+	irqreturn_t avb_irq = igb_handle_avb(q_vector, q_vector->adapter);
 
 	/* Write the ITR value calculated from the previous interrupt. */
 	igb_write_itr(q_vector);
 
-	napi_schedule(&q_vector->napi);
+	if (avb_irq != IRQ_HANDLED)
+		napi_schedule(&q_vector->napi);
 
 	return IRQ_HANDLED;
 }
@@ -7820,9 +7951,9 @@ static void igb_netpoll(struct net_device *netdev)
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
 	struct igb_q_vector *q_vector;
-	int i;
+	unsigned int i;
 
-	for (i = 0; i < adapter->num_q_vectors; i++) {
+	for (i = adapter->num_reserved; i < adapter->num_q_vectors; i++) {
 		q_vector = adapter->q_vector[i];
 		if (adapter->flags & IGB_FLAG_HAS_MSIX)
 			wr32(E1000_EIMC, q_vector->eims_value);
