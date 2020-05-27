@@ -38,6 +38,8 @@
 #define E1000_WUFC_EX   0x00000004 /* Directed Exact Wakeup Enable */
 #define E1000_WUFC_MC   0x00000008 /* Directed Multicast Wakeup Enable */
 #define E1000_WUFC_BC   0x00000010 /* Broadcast Wakeup Enable */
+#define E1000_WUFC_FLEX_HQ	0x00004000 /* Flex Filters Host Queuing (AVB)*/
+#define E1000_WUFC_FLX0	0x00010000 /* Flexible Filter 0 Enable */
 
 /* Extended Device Control */
 #define E1000_CTRL_EXT_SDP2_DATA 0x00000040 /* Value of SW Defineable Pin 2 */
@@ -112,7 +114,6 @@
 #define E1000_MRQC_RSS_FIELD_IPV6              0x00100000
 #define E1000_MRQC_RSS_FIELD_IPV6_TCP          0x00200000
 
-
 /* Management Control */
 #define E1000_MANC_SMBUS_EN      0x00000001 /* SMBus Enabled - RO */
 #define E1000_MANC_ASF_EN        0x00000002 /* ASF Enabled - RO */
@@ -134,6 +135,9 @@
 #define E1000_RCTL_RDMTS_HALF     0x00000000    /* rx desc min threshold size */
 #define E1000_RCTL_MO_SHIFT       12            /* multicast offset shift */
 #define E1000_RCTL_BAM            0x00008000    /* broadcast enable */
+/* these buffer sizes are valid if E1000_RCTL_BSEX is 0 */
+#define E1000_RCTL_SZ_2048        0x00000000    /* rx buffer size 2048 */
+#define E1000_RCTL_SZ_1024        0x00010000    /* rx buffer size 1024 */
 #define E1000_RCTL_SZ_512         0x00020000    /* rx buffer size 512 */
 #define E1000_RCTL_SZ_256         0x00030000    /* rx buffer size 256 */
 #define E1000_RCTL_VFE            0x00040000    /* vlan filter enable */
@@ -296,6 +300,7 @@
 #define E1000_TXD_CMD_RS     0x08000000 /* Report Status */
 #define E1000_TXD_CMD_DEXT   0x20000000 /* Descriptor extension (0 = legacy) */
 #define E1000_TXD_STAT_DD    0x00000001 /* Descriptor Done */
+#define E1000_TXD_STAT_TS    0x00000002 /* DMA Timestamp is provided */
 /* Extended desc bits for Linksec and timesync */
 
 /* Transmit Control */
@@ -304,6 +309,24 @@
 #define E1000_TCTL_CT     0x00000ff0    /* collision threshold */
 #define E1000_TCTL_COLD   0x003ff000    /* collision distance */
 #define E1000_TCTL_RTLC   0x01000000    /* Re-transmit on late collision */
+
+/* Transmit queue control*/
+#define E1000_TQAVCC_QUEUEMODE         0x80000000 /* strict/SR queue mode */
+#define E1000_TQAVHC_ZEROCREDIT        0x80000000 /*fix from spec*/
+#define E1000_TQAVCTRL_TXMODE          0x00000001 /* legacy/QAV tx mode */
+#define E1000_TQAVCTRL_1588_STAT_EN    0x00000004 /* DMA time of packets */
+#define E1000_TQAVCTRL_DATA_FETCH_ARB  0x00000010 /* data fetch arbitration */
+#define E1000_TQAVCTRL_DATA_TRAN_ARB   0x00000100 /* data tx arbitration */
+#define E1000_TQAVCTRL_DATA_TRAN_TIM   0x00000200 /* data launch time valid */
+#define E1000_TQAVCTRL_SP_WAIT_SR      0x00000400 /* stall SP to guarantee SR */
+#define E1000_TQAVCTRL_FETCH_TM_SHIFT  (16)       /* shift value */
+
+/* Tx packet buffer fields */
+#define E1000_TXPBSIZE_PBSZ_MASK      0x3F
+#define E1000_TXPBSIZE_TX0PB_SHIFT    0
+#define E1000_TXPBSIZE_TX1PB_SHIFT    6
+#define E1000_TXPBSIZE_TX2PB_SHIFT    12
+#define E1000_TXPBSIZE_TX3PB_SHIFT    18
 
 /* DMA Coalescing register fields */
 #define E1000_DMACR_DMACWT_MASK         0x00003FFF /* DMA Coal Watchdog Timer */
@@ -341,6 +364,7 @@
 #define E1000_RXCSUM_IPOFL     0x00000100   /* IPv4 checksum offload */
 #define E1000_RXCSUM_TUOFL     0x00000200   /* TCP / UDP checksum offload */
 #define E1000_RXCSUM_CRCOFL    0x00000800   /* CRC32 offload enable */
+#define E1000_RXCSUM_IPPCSE    0x00001000   /* IP payload checksum enable */
 #define E1000_RXCSUM_PCSD      0x00002000   /* packet checksum disabled */
 
 /* Header split receive */

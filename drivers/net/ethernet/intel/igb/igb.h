@@ -421,6 +421,12 @@ struct igb_adapter {
 	int num_rx_queues;
 	struct igb_ring *rx_ring[16];
 
+	/* some AVB related stuff... */
+	unsigned int num_reserved;
+	void (*avb_linkstat)(struct igb_adapter *adapter, bool up);
+	irqreturn_t (*avb_tx_irq)(struct igb_adapter *adapter, int queue);
+	irqreturn_t (*avb_rx_irq)(struct igb_adapter *adapter, int queue);
+
 	u32 max_frame_size;
 	u32 min_frame_size;
 
@@ -608,6 +614,29 @@ void igb_set_flag_queue_pairs(struct igb_adapter *, const u32);
 void igb_sysfs_exit(struct igb_adapter *adapter);
 int igb_sysfs_init(struct igb_adapter *adapter);
 #endif
+
+#define IGB_MAX_QAV_QUEUES 2
+#define IGB_AVB_TXR_CNT 256 /*dynamic setting (not yet) supported */
+#define IGB_AVB_RXR_CNT 256 /*dynamic setting (not yet) supported */
+#define IGB_NUM_AVB_QUEUES IGB_MAX_QAV_QUEUES
+#define IGB_AVB_MAX_FRAME_SIZE 1536
+
+static inline bool igb_avb_support_enabled(void)
+{
+#if (IS_ENABLED(CONFIG_IGB_EXT_AVB))
+	return true;
+#else
+	return false;
+#endif
+}
+
+void igb_register_avb_linkstat_cb(struct igb_adapter *adapter, void (*cb)
+				 (struct igb_adapter *adapter, bool up));
+void igb_register_avb_txirq(struct igb_adapter *adapter, irqreturn_t (*cb)
+			   (struct igb_adapter *adapter, int queue));
+void igb_register_avb_rxirq(struct igb_adapter *adapter, irqreturn_t (*cb)
+			   (struct igb_adapter *adapter, int queue));
+
 static inline s32 igb_reset_phy(struct e1000_hw *hw)
 {
 	if (hw->phy.ops.reset)

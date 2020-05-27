@@ -99,6 +99,25 @@ config IGB
 	  To compile this driver as a module, choose M here. The module
 	  will be called igb.
 
+config IGB_EXT_AVB
+	bool "Support for external AVB access to IGB device"
+	depends on IGB
+	---help---
+	  Say Y to enable AVB support in IGB driver.
+	  Only supported model is i210.
+	  When enabled 2 RX and TX queues get reserved for AVB usage.
+	  AVB transmission needs to be implemented by external driver.
+
+config IGB_STREAMING
+	tristate "Ethernet AVB Streaming API support"
+	depends on IGB_EXT_AVB
+	default m
+	---help---
+	  Ethernat AVB Streaming driver to be used by the Renesas MSE.
+	  Say 'Y' or 'M' to enable Ethernet AVB Streaming APIs.
+	  This driver supports the following network cards:
+		- i210.
+
 config IGB_HWMON
 	bool "Intel(R) PCI-Express Gigabit adapters HWMON support"
 	default y

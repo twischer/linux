@@ -62,6 +62,7 @@ s32 igb_write_i2c_byte(struct e1000_hw *hw, u8 byte_offset, u8 dev_addr,
 #define E1000_MRQC_ENABLE_VMDQ_RSS_MQ       0x00000005
 #define E1000_MRQC_RSS_FIELD_IPV6_UDP       0x00800000
 #define E1000_MRQC_RSS_FIELD_IPV6_UDP_EX    0x01000000
+#define E1000_MRQC_ENABLE_DEF_Q3            (0x00000003 << 3)
 
 #define E1000_EICR_TX_QUEUE ( \
 	E1000_EICR_TX_QUEUE0 |    \
@@ -159,6 +160,7 @@ struct e1000_adv_tx_context_desc {
 /* Additional Transmit Descriptor Control definitions */
 #define E1000_TXDCTL_QUEUE_ENABLE  0x02000000 /* Enable specific Tx Queue */
 /* Tx Queue Arbitration Priority 0=low, 1=high */
+#define E1000_TXDCTL_PRIORITY   0x08000000
 
 /* Additional Receive Descriptor Control definitions */
 #define E1000_RXDCTL_QUEUE_ENABLE  0x02000000 /* Enable specific Rx Queue */
